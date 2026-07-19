@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "md-to-html"
+version = "0.1.0"
+description = "Render a markdown file (with mermaid diagrams) into a self-contained, offline HTML file"
+authors = ["Sunil Musinada <sunil.musinada@gmail.com>"]
+packages = [{ include = "md_to_html.py" }]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+markdown = "^3.6"
+
+[tool.poetry.scripts]
+md-to-html = "md_to_html:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
