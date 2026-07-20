@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import functools
 import html
+import os
 import re
 import sys
 import webbrowser
@@ -203,24 +204,30 @@ pre.mermaid svg, div.mermaid svg { max-width: 100%; }
 nav.toc {
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.9rem 1.2rem;
-  margin: 1.4rem 0 2.2rem;
+  border-radius: 8px;
+  padding: 1.1rem 1.4rem 1.3rem;
+  margin: 1.6rem 0 2.4rem;
   box-shadow: var(--shadow);
   font-size: 0.92rem;
 }
 nav.toc .toc-title {
-  font-size: 0.72rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 0.4rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin-bottom: 0.6rem;
 }
 nav.toc ul { list-style: none; padding-left: 0; margin: 0; }
-nav.toc ul ul { padding-left: 1.1rem; }
-nav.toc li { margin: 0.15rem 0; }
-nav.toc a { color: var(--ink-soft); text-decoration: none; }
+nav.toc ul ul { padding-left: 1.2rem; margin-top: 0.2rem; }
+nav.toc li { margin: 0.35rem 0; }
+nav.toc a { text-decoration: none; }
 nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+/* depth 1 li = the page's h1 title */
+nav.toc > ul > li > a { color: var(--ink); font-weight: 700; }
+/* depth 2 li = h2 section headings -- match .doc-section h2's accent color */
+nav.toc > ul > li > ul > li > a { color: var(--accent); font-weight: 600; font-size: 0.98rem; }
+/* depth 3+ li = h3 subheadings and deeper -- match h3's ink color */
+nav.toc > ul > li > ul > li > ul li > a { color: var(--ink); font-weight: 400; font-size: 0.88rem; }
 
 header.doc-meta {
   font-family: ui-monospace, "SF Mono", "Roboto Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -395,19 +402,50 @@ def render(md_path: Path, title: str | None, theme: str) -> str:
     )
 
 
-def serve(output: Path, port: int) -> None:
-    """Serve output's directory over HTTP and open the file in the browser."""
+def serve(output: Path, port: int, background: bool) -> None:
+    """Serve output's directory over HTTP and open the file in the browser.
+
+    With background=True, forks and detaches the server into a child process
+    (new session, std streams closed) so it keeps running after this process
+    -- and the terminal that launched it -- exits.
+    """
     handler = functools.partial(SimpleHTTPRequestHandler, directory=str(output.parent))
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     url = f"http://127.0.0.1:{httpd.server_port}/{output.name}"
-    print(f"serving at {url} (Ctrl+C to stop)")
-    webbrowser.open(url)
+
+    if not background:
+        print(f"serving at {url} (Ctrl+C to stop)")
+        webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            httpd.server_close()
+        return
+
+    pid = os.fork()
+    if pid > 0:
+        # Parent: the child inherited the bound socket, so it's safe to
+        # close our handle and exit -- the child keeps listening.
+        httpd.server_close()
+        webbrowser.open(url)
+        print(f"serving at {url} in background (pid {pid})")
+        print(f"stop with: kill {pid}")
+        return
+
+    # Child: detach from the controlling terminal so closing it (or the
+    # parent shell) doesn't send us SIGHUP, then run forever.
+    os.setsid()
+    devnull_fd = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull_fd, 0)
+    os.dup2(devnull_fd, 1)
+    os.dup2(devnull_fd, 2)
     try:
         httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
     finally:
         httpd.server_close()
+        os._exit(0)
 
 
 def main() -> None:
@@ -433,7 +471,17 @@ def main() -> None:
         default=0,
         help="port to serve on with --serve (default: 0, pick a free port automatically)",
     )
+    parser.add_argument(
+        "--background",
+        "-d",
+        action="store_true",
+        help="with --serve, detach the server so it keeps running after this command "
+        "(and the terminal) exits; stop it later with `kill <pid>`",
+    )
     args = parser.parse_args()
+
+    if args.background and not args.serve:
+        sys.exit("error: --background requires --serve")
 
     if not args.input.exists():
         sys.exit(f"error: {args.input} not found")
@@ -443,7 +491,7 @@ def main() -> None:
     print(f"wrote {output}")
 
     if args.serve:
-        serve(output, args.port)
+        serve(output, args.port, args.background)
 
 
 if __name__ == "__main__":
