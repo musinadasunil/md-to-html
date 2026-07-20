@@ -103,17 +103,21 @@ body {
   -webkit-font-smoothing: antialiased;
   line-height: 1.65;
 }
-.wrap { max-width: 880px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+.wrap {
+  max-width: min(1080px, 94vw);
+  margin: 0 auto;
+  padding: clamp(1.5rem, 5vw, 3rem) clamp(1rem, 4vw, 1.5rem) clamp(2.5rem, 6vw, 5rem);
+}
 h1, h2, h3, h4 { text-wrap: balance; line-height: 1.2; margin: 1.8rem 0 0.6rem; }
-h1 { font-size: 2rem; margin-top: 0; letter-spacing: -0.01em; }
-h2 { font-size: 1.4rem; padding-top: 0.4rem; border-top: 1px solid var(--border); margin-top: 2.4rem; }
+h1 { font-size: clamp(1.5rem, 4vw + 0.5rem, 2rem); margin-top: 0; letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.2rem, 2vw + 0.8rem, 1.4rem); padding-top: 0.4rem; border-top: 1px solid var(--border); margin-top: 2.4rem; }
 h3 { font-size: 1.12rem; color: var(--ink); }
 
 .doc-section {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 1.7rem 1.9rem 1.9rem;
+  padding: clamp(1.1rem, 3vw, 1.7rem) clamp(1.1rem, 3.5vw, 1.9rem) clamp(1.2rem, 3.5vw, 1.9rem);
   margin: 1.6rem 0;
   box-shadow: var(--shadow);
 }
@@ -212,7 +216,7 @@ nav.toc {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 1.1rem 1.4rem 1.3rem;
+  padding: clamp(0.9rem, 3vw, 1.1rem) clamp(1rem, 3.5vw, 1.4rem) clamp(1rem, 3vw, 1.3rem);
   margin: 1.6rem 0 2.4rem;
   box-shadow: var(--shadow);
   font-size: 0.92rem;
