@@ -5,8 +5,12 @@ self-contained HTML file that renders offline -- no CDN, no network access
 needed to view it.
 
 Usage:
-    poetry run md-to-html render path/to/architecture.md
-    poetry run md-to-html render path/to/architecture.md -o out.html --title "Payments Service"
+    poetry run md-to-html path/to/architecture.md
+    poetry run md-to-html path/to/architecture.md -o out.html --title "Payments Service"
+
+Rendering starts the shared local server if it isn't already running, then
+opens the result in a browser (reusing an open Microsoft Edge window if one
+exists, otherwise your default browser).
 
 Requires vendor/mermaid.min.js to sit next to this script (already vendored).
 Dependencies are managed by Poetry (see pyproject.toml) -- run `poetry install` first.
@@ -20,6 +24,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -506,6 +511,28 @@ def server_status() -> None:
     print(f"running: pid {state['pid']}, http://127.0.0.1:{state['port']}/ (root {state['root']})")
 
 
+def edge_running() -> bool:
+    if sys.platform != "darwin":
+        return False
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "Microsoft Edge"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def open_url(url: str) -> None:
+    """Open a new tab in an already-running Edge, else the default browser."""
+    if edge_running():
+        subprocess.run(["open", "-a", "Microsoft Edge", url])
+    else:
+        webbrowser.open(url)
+
+
 def cmd_render(args: argparse.Namespace) -> None:
     if not args.input.exists():
         sys.exit(f"error: {args.input} not found")
@@ -514,13 +541,17 @@ def cmd_render(args: argparse.Namespace) -> None:
     output.write_text(render(args.input, args.title, args.theme), encoding="utf-8")
     print(f"wrote {output}")
 
+    if not running_state():
+        server_start(DEFAULT_PORT, Path.home())
+
     url = url_for(output)
-    if url:
-        print(f"open at {url}")
-        if args.open:
-            webbrowser.open(url)
-    elif args.open:
-        sys.exit("error: no md-to-html server running -- start one with `md-to-html server start`")
+    if not url:
+        print(f"warning: {output} is outside the server root -- open it manually")
+        return
+
+    print(f"open at {url}")
+    if args.open:
+        open_url(url)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -539,9 +570,11 @@ def build_parser() -> argparse.ArgumentParser:
         "page always lets you override this live.",
     )
     render_p.add_argument(
-        "--open",
-        action="store_true",
-        help="open the result in the browser via the running `md-to-html server` (error if none is running)",
+        "--no-open",
+        dest="open",
+        action="store_false",
+        default=True,
+        help="don't automatically open the result in the browser",
     )
     render_p.set_defaults(func=cmd_render)
 
@@ -569,7 +602,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    argv = sys.argv[1:]
+    if argv and argv[0] not in ("render", "server", "-h", "--help"):
+        argv = ["render", *argv]
+    args = build_parser().parse_args(argv)
     args.func(args)
 
 
