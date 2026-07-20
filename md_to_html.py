@@ -19,8 +19,10 @@ from __future__ import annotations
 import argparse
 import functools
 import html
+import json
 import os
 import re
+import signal
 import sys
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +32,9 @@ import markdown
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MERMAID_JS_PATH = SCRIPT_DIR / "vendor" / "mermaid.min.js"
+
+DEFAULT_PORT = 4711
+STATE_PATH = Path.home() / ".cache" / "md-to-html" / "server.json"
 
 MERMAID_BLOCK_RE = re.compile(
     r'<pre><code class="(?:language-)?mermaid">(.*?)</code></pre>', re.DOTALL
@@ -402,36 +407,73 @@ def render(md_path: Path, title: str | None, theme: str) -> str:
     )
 
 
-def serve(output: Path, port: int, background: bool) -> None:
-    """Serve output's directory over HTTP and open the file in the browser.
+def read_state() -> dict | None:
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
 
-    With background=True, forks and detaches the server into a child process
-    (new session, std streams closed) so it keeps running after this process
-    -- and the terminal that launched it -- exits.
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def running_state() -> dict | None:
+    """Return the state file's contents if the server it describes is alive."""
+    state = read_state()
+    if state and pid_alive(state["pid"]):
+        return state
+    return None
+
+
+def url_for(output: Path) -> str | None:
+    """URL for output on the persistent server, if it's running and covers output."""
+    state = running_state()
+    if not state:
+        return None
+    root = Path(state["root"])
+    try:
+        rel = output.resolve().relative_to(root)
+    except ValueError:
+        return None
+    return f"http://127.0.0.1:{state['port']}/{rel.as_posix()}"
+
+
+def server_start(port: int, root: Path) -> None:
+    """Start the one persistent, shared server, detached from this terminal.
+
+    Idempotent: if a server described by the state file is already alive,
+    this just reports it instead of starting a second one. The server binds
+    once here (in this process) and the child inherits the bound socket, so
+    there's no bind-after-fork race.
     """
-    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(output.parent))
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
-    url = f"http://127.0.0.1:{httpd.server_port}/{output.name}"
-
-    if not background:
-        print(f"serving at {url} (Ctrl+C to stop)")
-        webbrowser.open(url)
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            httpd.server_close()
+    state = running_state()
+    if state:
+        print(f"already running: pid {state['pid']}, http://127.0.0.1:{state['port']}/ (root {state['root']})")
         return
+
+    root = root.resolve()
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(root))
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    except OSError as e:
+        sys.exit(f"error: can't bind 127.0.0.1:{port} ({e}) -- something else may be using that port")
 
     pid = os.fork()
     if pid > 0:
         # Parent: the child inherited the bound socket, so it's safe to
         # close our handle and exit -- the child keeps listening.
         httpd.server_close()
-        webbrowser.open(url)
-        print(f"serving at {url} in background (pid {pid})")
-        print(f"stop with: kill {pid}")
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        STATE_PATH.write_text(json.dumps({"pid": pid, "port": port, "root": str(root)}))
+        print(f"server started: pid {pid}, http://127.0.0.1:{port}/ (root {root})")
+        print("stop with: md-to-html server stop")
         return
 
     # Child: detach from the controlling terminal so closing it (or the
@@ -448,41 +490,26 @@ def serve(output: Path, port: int, background: bool) -> None:
         os._exit(0)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="markdown file to render")
-    parser.add_argument("-o", "--output", type=Path, help="output .html path (default: alongside input)")
-    parser.add_argument("--title", help="page title (default: input filename)")
-    parser.add_argument(
-        "--theme",
-        choices=["auto", "light", "dark"],
-        default="auto",
-        help="starting theme (default: auto, follows OS preference). A toggle button in the "
-        "page always lets you override this live.",
-    )
-    parser.add_argument(
-        "--serve",
-        action="store_true",
-        help="after writing the HTML, start a local server and open it in the browser",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=0,
-        help="port to serve on with --serve (default: 0, pick a free port automatically)",
-    )
-    parser.add_argument(
-        "--background",
-        "-d",
-        action="store_true",
-        help="with --serve, detach the server so it keeps running after this command "
-        "(and the terminal) exits; stop it later with `kill <pid>`",
-    )
-    args = parser.parse_args()
+def server_stop() -> None:
+    state = running_state()
+    if not state:
+        print("no server running")
+        STATE_PATH.unlink(missing_ok=True)
+        return
+    os.kill(state["pid"], signal.SIGTERM)
+    STATE_PATH.unlink(missing_ok=True)
+    print(f"stopped pid {state['pid']}")
 
-    if args.background and not args.serve:
-        sys.exit("error: --background requires --serve")
 
+def server_status() -> None:
+    state = running_state()
+    if not state:
+        print("not running")
+        return
+    print(f"running: pid {state['pid']}, http://127.0.0.1:{state['port']}/ (root {state['root']})")
+
+
+def cmd_render(args: argparse.Namespace) -> None:
     if not args.input.exists():
         sys.exit(f"error: {args.input} not found")
 
@@ -490,8 +517,63 @@ def main() -> None:
     output.write_text(render(args.input, args.title, args.theme), encoding="utf-8")
     print(f"wrote {output}")
 
-    if args.serve:
-        serve(output, args.port, args.background)
+    url = url_for(output)
+    if url:
+        print(f"open at {url}")
+        if args.open:
+            webbrowser.open(url)
+    elif args.open:
+        sys.exit("error: no md-to-html server running -- start one with `md-to-html server start`")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    render_p = sub.add_parser("render", help="render a markdown file to a self-contained HTML file")
+    render_p.add_argument("input", type=Path, help="markdown file to render")
+    render_p.add_argument("-o", "--output", type=Path, help="output .html path (default: alongside input)")
+    render_p.add_argument("--title", help="page title (default: input filename)")
+    render_p.add_argument(
+        "--theme",
+        choices=["auto", "light", "dark"],
+        default="auto",
+        help="starting theme (default: auto, follows OS preference). A toggle button in the "
+        "page always lets you override this live.",
+    )
+    render_p.add_argument(
+        "--open",
+        action="store_true",
+        help="open the result in the browser via the running `md-to-html server` (error if none is running)",
+    )
+    render_p.set_defaults(func=cmd_render)
+
+    server_p = sub.add_parser("server", help="manage the one persistent local server shared by all renders")
+    server_sub = server_p.add_subparsers(dest="server_command", required=True)
+
+    start_p = server_sub.add_parser("start", help="start the shared server in the background (idempotent)")
+    start_p.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port to listen on (default: {DEFAULT_PORT})")
+    start_p.add_argument(
+        "--root",
+        type=Path,
+        default=Path.home(),
+        help="directory to serve (default: your home directory, so any rendered .html "
+        "anywhere under it is reachable)",
+    )
+    start_p.set_defaults(func=lambda a: server_start(a.port, a.root))
+
+    stop_p = server_sub.add_parser("stop", help="stop the shared server")
+    stop_p.set_defaults(func=lambda a: server_stop())
+
+    status_p = server_sub.add_parser("status", help="show whether the shared server is running")
+    status_p.set_defaults(func=lambda a: server_status())
+
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":
