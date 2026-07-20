@@ -17,9 +17,12 @@ Requires vendor/mermaid.min.js to sit next to this script (already vendored).
 from __future__ import annotations
 
 import argparse
+import functools
 import html
 import re
 import sys
+import webbrowser
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import markdown
@@ -392,6 +395,21 @@ def render(md_path: Path, title: str | None, theme: str) -> str:
     )
 
 
+def serve(output: Path, port: int) -> None:
+    """Serve output's directory over HTTP and open the file in the browser."""
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(output.parent))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    url = f"http://127.0.0.1:{httpd.server_port}/{output.name}"
+    print(f"serving at {url} (Ctrl+C to stop)")
+    webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="markdown file to render")
@@ -404,6 +422,17 @@ def main() -> None:
         help="starting theme (default: auto, follows OS preference). A toggle button in the "
         "page always lets you override this live.",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="after writing the HTML, start a local server and open it in the browser",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="port to serve on with --serve (default: 0, pick a free port automatically)",
+    )
     args = parser.parse_args()
 
     if not args.input.exists():
@@ -412,6 +441,9 @@ def main() -> None:
     output = args.output or args.input.with_suffix(".html")
     output.write_text(render(args.input, args.title, args.theme), encoding="utf-8")
     print(f"wrote {output}")
+
+    if args.serve:
+        serve(output, args.port)
 
 
 if __name__ == "__main__":
