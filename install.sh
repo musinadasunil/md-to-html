@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bootstrap md-to-html on a new machine: clone the repo, ensure uv is
-# installed, and put a `md-to-html` command on PATH.
+# Bootstrap md-to-html on a new machine: clone the repo, ensure Poetry is
+# installed, run `poetry install`, and put a `md-to-html` command on PATH.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/musinadasunil/md-to-html/main/install.sh | bash
@@ -25,16 +25,22 @@ else
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "==> uv not found, installing (https://astral.sh/uv)"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+if ! command -v poetry >/dev/null 2>&1; then
+  echo "==> Poetry not found, installing (https://python-poetry.org)"
+  curl -sSL https://install.python-poetry.org | python3 -
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
-chmod +x "$INSTALL_DIR/md_to_html.py"
+echo "==> Installing dependencies with Poetry"
+poetry -C "$INSTALL_DIR" install
+
 mkdir -p "$BIN_DIR"
-ln -sf "$INSTALL_DIR/md_to_html.py" "$BIN_DIR/md-to-html"
-echo "==> Linked $BIN_DIR/md-to-html -> $INSTALL_DIR/md_to_html.py"
+cat > "$BIN_DIR/md-to-html" <<EOF
+#!/usr/bin/env bash
+exec poetry -P "$INSTALL_DIR" run md-to-html "\$@"
+EOF
+chmod +x "$BIN_DIR/md-to-html"
+echo "==> Wrote $BIN_DIR/md-to-html (runs the project through Poetry)"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*)

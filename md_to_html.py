@@ -1,18 +1,15 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["markdown"]
-# ///
+#!/usr/bin/env python3
 """
 Render a markdown file (with ```mermaid fenced diagrams) into a single,
 self-contained HTML file that renders offline -- no CDN, no network access
 needed to view it.
 
 Usage:
-    uv run md_to_html.py path/to/architecture.md
-    uv run md_to_html.py path/to/architecture.md -o out.html --title "Payments Service"
+    poetry run md-to-html render path/to/architecture.md
+    poetry run md-to-html render path/to/architecture.md -o out.html --title "Payments Service"
 
 Requires vendor/mermaid.min.js to sit next to this script (already vendored).
+Dependencies are managed by Poetry (see pyproject.toml) -- run `poetry install` first.
 """
 from __future__ import annotations
 
