@@ -104,7 +104,7 @@ body {
   line-height: 1.65;
 }
 .wrap {
-  max-width: min(1080px, 94vw);
+  max-width: min(1400px, 96vw);
   margin: 0 auto;
   padding: clamp(1.5rem, 5vw, 3rem) clamp(1rem, 4vw, 1.5rem) clamp(2.5rem, 6vw, 5rem);
 }
